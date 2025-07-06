@@ -24,6 +24,7 @@
 
 // fsl
 #include "../../../../Common_3/Graphics/FSL/defaults.h"
+#include "./Shaders/FSL/Global.srt.h"
 
 struct Vertex
 {
@@ -31,10 +32,24 @@ struct Vertex
     float3 color;
 };
 
-static Vertex gTriangleVerts[3] = {
-    { { 0.0f,  0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
-    { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
-    { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f } },
+STRUCT(UniformBlock)
+{
+    mat4 mvp;
+};
+
+static Vertex gPyramidVerts[12] = {
+    { { 0.0f, 0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
+    { { -0.5f, -0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
+    { { 0.5f, -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } },
+    { { 0.0f, 0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
+    { { 0.5f, -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } },
+    { { 0.5f, -0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f } },
+    { { 0.0f, 0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
+    { { 0.5f, -0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f } },
+    { { -0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 1.0f } },
+    { { 0.0f, 0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
+    { { -0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 1.0f } },
+    { { -0.5f, -0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
 };
 
 const uint32_t gDataBufferCount = 2;
@@ -47,6 +62,10 @@ Semaphore* pImageAcquiredSemaphore = NULL;
 Shader*    pBasicShader = NULL;
 Pipeline*  pBasicPipeline = NULL;
 Buffer*    pVertexBuffer = NULL;
+Buffer*    pUniformBuffer[gDataBufferCount] = { NULL };
+DescriptorSet* pDescriptorSetUniforms = NULL;
+UniformBlock gUniformData;
+float gRotation = 0.0f;
 uint32_t   gFrameIndex = 0;
 
 class Hades3 : public IApp
@@ -86,10 +105,22 @@ public:
         BufferLoadDesc vbDesc = {};
         vbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
         vbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-        vbDesc.mDesc.mSize = sizeof(gTriangleVerts);
-        vbDesc.pData = gTriangleVerts;
+        vbDesc.mDesc.mSize = sizeof(gPyramidVerts);
+        vbDesc.pData = gPyramidVerts;
         vbDesc.ppBuffer = &pVertexBuffer;
         addResource(&vbDesc, NULL);
+
+        BufferLoadDesc ubDesc = {};
+        ubDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        ubDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_CPU_TO_GPU;
+        ubDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
+        ubDesc.mDesc.mSize = sizeof(UniformBlock);
+        ubDesc.pData = NULL;
+        for (uint32_t i = 0; i < gDataBufferCount; ++i)
+        {
+            ubDesc.ppBuffer = &pUniformBuffer[i];
+            addResource(&ubDesc, NULL);
+        }
 
         return true;
     }
@@ -98,6 +129,8 @@ public:
     {
         waitQueueIdle(pGraphicsQueue);
         removeResource(pVertexBuffer);
+        for (uint32_t i = 0; i < gDataBufferCount; ++i)
+            removeResource(pUniformBuffer[i]);
         exitGpuCmdRing(pRenderer, &gGraphicsCmdRing);
         exitSemaphore(pRenderer, pImageAcquiredSemaphore);
         exitRootSignature(pRenderer);
@@ -112,8 +145,10 @@ public:
     {
         if (!addSwapChain())
             return false;
+        addDescriptorSets();
         addShaders();
         addPipelines();
+        prepareDescriptorSets();
         return true;
     }
 
@@ -121,11 +156,19 @@ public:
     {
         waitQueueIdle(pGraphicsQueue);
         removePipelines();
+        removeDescriptorSets();
         removeSwapChain(pRenderer, pSwapChain);
         removeShaders();
     }
 
-    void Update(float deltaTime) { }
+    void Update(float deltaTime)
+    {
+        gRotation += deltaTime;
+        float aspectInverse = (float)mSettings.mHeight / (float)mSettings.mWidth;
+        CameraMatrix proj = CameraMatrix::perspectiveReverseZ(PI / 2.0f, aspectInverse, 0.1f, 10.0f);
+        mat4 model = mat4::rotationY(gRotation);
+        gUniformData.mvp = proj * model;
+    }
 
     void Draw()
     {
@@ -153,10 +196,15 @@ public:
         cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
         cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
+        BufferUpdateDesc ubUpdate = { pUniformBuffer[gFrameIndex] };
+        ubUpdate.pData = &gUniformData;
+        updateResource(&ubUpdate);
+
+        cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
         cmdBindPipeline(cmd, pBasicPipeline);
         uint32_t stride = sizeof(Vertex);
         cmdBindVertexBuffer(cmd, 1, &pVertexBuffer, &stride, NULL);
-        cmdDraw(cmd, 3, 0);
+        cmdDraw(cmd, 12, 0);
 
         cmdBindRenderTargets(cmd, NULL);
         barrier = { pRenderTarget, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PRESENT };
@@ -239,7 +287,7 @@ public:
         DepthStateDesc depthStateDesc = {};
 
         PipelineDesc desc = {};
-        PIPELINE_LAYOUT_DESC(desc, NULL, NULL, NULL, NULL);
+        PIPELINE_LAYOUT_DESC(desc, NULL, SRT_LAYOUT_DESC(SrtData, PerFrame), NULL, NULL);
         desc.mType = PIPELINE_TYPE_GRAPHICS;
         GraphicsPipelineDesc& pipelineSettings = desc.mGraphicsDesc;
         pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
@@ -255,6 +303,25 @@ public:
     }
 
     void removePipelines() { removePipeline(pRenderer, pBasicPipeline); }
+
+    void addDescriptorSets()
+    {
+        DescriptorSetDesc desc = SRT_SET_DESC(SrtData, PerFrame, gDataBufferCount, 0);
+        addDescriptorSet(pRenderer, &desc, &pDescriptorSetUniforms);
+    }
+
+    void removeDescriptorSets() { removeDescriptorSet(pRenderer, pDescriptorSetUniforms); }
+
+    void prepareDescriptorSets()
+    {
+        for (uint32_t i = 0; i < gDataBufferCount; ++i)
+        {
+            DescriptorData params = {};
+            params.mIndex = SRT_RES_IDX(SrtData, PerFrame, gUniformBlock);
+            params.ppBuffers = &pUniformBuffer[i];
+            updateDescriptorSet(pRenderer, i, pDescriptorSetUniforms, 1, &params);
+        }
+    }
 };
 
 int WindowsMain(int argc, char** argv, IApp* app);

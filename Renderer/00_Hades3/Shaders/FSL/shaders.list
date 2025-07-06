@@ -6,6 +6,10 @@
 #rootsig compute.rootsig
 #end
 
+#srt Global.srt
+#include "Global.srt.h"
+#end
+
 #frag basic.frag
 #include "Basic.frag.fsl"
 #end
