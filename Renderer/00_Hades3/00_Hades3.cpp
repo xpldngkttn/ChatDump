@@ -1,11 +1,28 @@
+// Interfaces
 #include "../../../../Common_3/Application/Interfaces/IApp.h"
+#include "../../../../Common_3/Application/Interfaces/ICameraController.h"
+#include "../../../../Common_3/Application/Interfaces/IFont.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
+#include "../../../../Common_3/Application/Interfaces/IProfiler.h"
+#include "../../../../Common_3/Application/Interfaces/IScreenshot.h"
+#include "../../../../Common_3/Application/Interfaces/IUI.h"
+#include "../../../../Common_3/Game/Interfaces/IScripting.h"
 #include "../../../../Common_3/Utilities/Interfaces/IFileSystem.h"
 #include "../../../../Common_3/Utilities/Interfaces/ILog.h"
+#include "../../../../Common_3/Utilities/Interfaces/ITime.h"
+
+// Renderer
 #include "../../../../Common_3/Graphics/Interfaces/IGraphics.h"
 #include "../../../../Common_3/Resources/ResourceLoader/Interfaces/IResourceLoader.h"
-#include "../../../../Common_3/Utilities/Interfaces/ITime.h"
+
+#include "../../../../Common_3/Utilities/RingBuffer.h"
+
+// Math
 #include "../../../../Common_3/Utilities/Math/MathTypes.h"
+
 #include "../../../../Common_3/Utilities/Interfaces/IMemory.h"
+
+// fsl
 #include "../../../../Common_3/Graphics/FSL/defaults.h"
 
 struct Vertex
@@ -240,4 +257,16 @@ public:
     void removePipelines() { removePipeline(pRenderer, pBasicPipeline); }
 };
 
-DEFINE_APPLICATION_MAIN(Hades3)
+int WindowsMain(int argc, char** argv, IApp* app);
+extern "C"
+{
+__declspec(dllexport) extern const UINT  D3D12SDKVersion = 715;
+__declspec(dllexport) extern const char* D3D12SDKPath = u8"";
+}
+int main(int argc, char** argv)
+{
+    IApp::argc = argc;
+    IApp::argv = (const char**)argv;
+    static Hades3 app = {};
+    return WindowsMain(argc, argv, &app);
+}
