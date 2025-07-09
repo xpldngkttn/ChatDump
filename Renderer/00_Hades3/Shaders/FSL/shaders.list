@@ -14,10 +14,3 @@
 #include "Basic.vert.fsl"
 #end
 
-#frag skybox.frag
-#include "Skybox.frag.fsl"
-#end
-
-#vert FT_MULTIVIEW skybox.vert
-#include "Skybox.vert.fsl"
-#end
