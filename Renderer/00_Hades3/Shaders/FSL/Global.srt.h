@@ -27,15 +27,6 @@
 
 // for low end iOS devices, do not use Argument buffers
 BEGIN_SRT_NO_AB(SrtData)
-    BEGIN_SRT_SET(Persistent)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gRightTexture)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gLeftTexture)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gTopTexture)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gBotTexture)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gFrontTexture)
-        DECL_TEXTURE(Persistent, Tex2D(float4), gBackTexture)
-        DECL_SAMPLER(Persistent, SamplerState, gSampler)
-    END_SRT_SET(Persistent)
     BEGIN_SRT_SET(PerFrame)
         DECL_CBUFFER(PerFrame, CBUFFER(UniformData), gUniformBlock)
     END_SRT_SET(PerFrame)

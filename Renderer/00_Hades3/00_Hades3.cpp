@@ -53,35 +53,42 @@
 #include "../../../../Common_3/Graphics/FSL/defaults.h"
 #include "./Shaders/FSL/Global.srt.h"
 
-/// Demo structures
-struct PlanetInfoStruct
+/// Shape definition editable by users
+struct ShapeDefinition
 {
-    mat4  mTranslationMat;
-    mat4  mScaleMat;
-    mat4  mSharedMat; // Matrix to pass down to children
-    vec4  mColor;
-    float mRotationSpeed; // Rotation speed around self
+    uint32_t   vertexCount;
+    uint32_t   indexCount;
+    float3     positions[64];
+    uint16_t   indices[128];
 };
 
+// Default pyramid shape. Edit the values below to change the rendered geometry.
+static ShapeDefinition gShapeDefinition = {
+    18,
+    18,
+    {
+        {0,1,0}, {-1,-1,1}, {1,-1,1},
+        {0,1,0}, {1,-1,1}, {1,-1,-1},
+        {0,1,0}, {1,-1,-1}, {-1,-1,-1},
+        {0,1,0}, {-1,-1,-1}, {-1,-1,1},
+        {-1,-1,1}, {1,-1,1}, {-1,-1,-1},
+        {1,-1,1}, {1,-1,-1}, {-1,-1,-1}
+    },
+    {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17}
+};
+
+/// Uniform buffer data for rendering a single mesh
 struct UniformBlock
 {
     CameraMatrix mProjectView;
-    CameraMatrix mSkyProjectView;
-    mat4         mToWorldMat[MAX_PLANETS];
-    vec4         mColor[MAX_PLANETS];
-
-    // Point Light Information
-    vec4 mLightPosition;
-    vec4 mLightColor;
+    mat4         mModelMat;
+    vec4         mColor;
+    vec4         mLightPosition;
+    vec4         mLightColor;
 };
 
 // But we only need Two sets of resources (one in flight and one being used on CPU)
 const uint32_t gDataBufferCount = 2;
-const uint     gNumPlanets = 1;
-const uint     gTimeOffset = 600000; // For visually better starting locations
-const float    gRotSelfScale = 0.0004f;
-const float    gRotOrbitYScale = 0.001f;
-const float    gRotOrbitZScale = 0.00001f;
 
 Renderer*  pRenderer = NULL;
 Queue*     pGraphicsQueue = NULL;
@@ -99,12 +106,6 @@ Pipeline*    pSpherePipeline = NULL;
 VertexLayout gSphereVertexLayout = {};
 uint32_t     gSphereLayoutType = 0;
 
-Shader*        pSkyBoxDrawShader = NULL;
-Buffer*        pSkyBoxVertexBuffer = NULL;
-Pipeline*      pSkyBoxDrawPipeline = NULL;
-Texture*       pSkyBoxTextures[6];
-Sampler*       pSkyBoxSampler = {};
-DescriptorSet* pDescriptorSetTexture = { NULL };
 DescriptorSet* pDescriptorSetUniforms = { NULL };
 
 Buffer* pUniformBuffer[gDataBufferCount] = { NULL };
@@ -113,7 +114,6 @@ uint32_t     gFrameIndex = 0;
 ProfileToken gGpuProfileToken = PROFILE_INVALID_TOKEN;
 
 UniformBlock     gUniformData;
-PlanetInfoStruct gPlanetInfoData[gNumPlanets];
 
 ICameraController* pCameraController = NULL;
 
@@ -123,37 +123,7 @@ uint32_t gFontID = 0;
 
 QueryPool* pPipelineStatsQueryPool[gDataBufferCount] = {};
 
-const char* pSkyBoxImageFileNames[] = { "Skybox_right1.tex",  "Skybox_left2.tex",  "Skybox_top3.tex",
-                                        "Skybox_bottom4.tex", "Skybox_front5.tex", "Skybox_back6.tex" };
-
 FontDrawDesc gFrameTimeDraw;
-
-// Generate sky box vertex buffer
-const float gSkyBoxPoints[] = {
-    10.0f,  -10.0f, -10.0f, 6.0f, // -z
-    -10.0f, -10.0f, -10.0f, 6.0f,   -10.0f, 10.0f,  -10.0f, 6.0f,   -10.0f, 10.0f,
-    -10.0f, 6.0f,   10.0f,  10.0f,  -10.0f, 6.0f,   10.0f,  -10.0f, -10.0f, 6.0f,
-
-    -10.0f, -10.0f, 10.0f,  2.0f, //-x
-    -10.0f, -10.0f, -10.0f, 2.0f,   -10.0f, 10.0f,  -10.0f, 2.0f,   -10.0f, 10.0f,
-    -10.0f, 2.0f,   -10.0f, 10.0f,  10.0f,  2.0f,   -10.0f, -10.0f, 10.0f,  2.0f,
-
-    10.0f,  -10.0f, -10.0f, 1.0f, //+x
-    10.0f,  -10.0f, 10.0f,  1.0f,   10.0f,  10.0f,  10.0f,  1.0f,   10.0f,  10.0f,
-    10.0f,  1.0f,   10.0f,  10.0f,  -10.0f, 1.0f,   10.0f,  -10.0f, -10.0f, 1.0f,
-
-    -10.0f, -10.0f, 10.0f,  5.0f, // +z
-    -10.0f, 10.0f,  10.0f,  5.0f,   10.0f,  10.0f,  10.0f,  5.0f,   10.0f,  10.0f,
-    10.0f,  5.0f,   10.0f,  -10.0f, 10.0f,  5.0f,   -10.0f, -10.0f, 10.0f,  5.0f,
-
-    -10.0f, 10.0f,  -10.0f, 3.0f, //+y
-    10.0f,  10.0f,  -10.0f, 3.0f,   10.0f,  10.0f,  10.0f,  3.0f,   10.0f,  10.0f,
-    10.0f,  3.0f,   -10.0f, 10.0f,  10.0f,  3.0f,   -10.0f, 10.0f,  -10.0f, 3.0f,
-
-    10.0f,  -10.0f, 10.0f,  4.0f, //-y
-    10.0f,  -10.0f, -10.0f, 4.0f,   -10.0f, -10.0f, -10.0f, 4.0f,   -10.0f, -10.0f,
-    -10.0f, 4.0f,   -10.0f, -10.0f, 10.0f,  4.0f,   10.0f,  -10.0f, 10.0f,  4.0f,
-};
 
 static unsigned char gPipelineStatsCharArray[2048] = {};
 static bstring       gPipelineStats = bfromarr(gPipelineStatsCharArray);
@@ -203,17 +173,12 @@ static void generate_complex_mesh()
     add_attribute(&gSphereVertexLayout, SEMANTIC_POSITION, TinyImageFormat_R32G32B32_SFLOAT, 0);
     add_attribute(&gSphereVertexLayout, SEMANTIC_TEXCOORD0, TinyImageFormat_R8G8B8A8_UNORM, 12);
     add_attribute(&gSphereVertexLayout, SEMANTIC_NORMAL, TinyImageFormat_R32G32B32_SFLOAT, 16);
-    const float3 positions[] = {
-        {0,1,0}, {-1,-1,1}, {1,-1,1},
-        {0,1,0}, {1,-1,1}, {1,-1,-1},
-        {0,1,0}, {1,-1,-1}, {-1,-1,-1},
-        {0,1,0}, {-1,-1,-1}, {-1,-1,1},
-        {-1,-1,1}, {1,-1,1}, {-1,-1,-1},
-        {1,-1,1}, {1,-1,-1}, {-1,-1,-1}
-    };
-    const uint16_t indices[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17};
-    const uint32_t vertexCount = 18;
-    float3 normals[vertexCount];
+
+    const float3* positions = gShapeDefinition.positions;
+    const uint16_t* indices = gShapeDefinition.indices;
+    const uint32_t vertexCount = gShapeDefinition.vertexCount;
+    const uint32_t indexCount = gShapeDefinition.indexCount;
+    float3* normals = (float3*)tf_malloc(sizeof(float3) * vertexCount);
     for(uint32_t i=0;i<vertexCount;i+=3){
         float3 a=positions[i];
         float3 b=positions[i+1];
@@ -221,14 +186,14 @@ static void generate_complex_mesh()
         float3 n = normalize(cross(b-a,c-a));
         normals[i]=normals[i+1]=normals[i+2]=n;
     }
-    uint8_t colors[vertexCount][3];
+    uint8_t (*colors)[3] = (uint8_t(*)[3])tf_malloc(sizeof(uint8_t[3]) * vertexCount);
     for(uint32_t i=0;i<vertexCount;i++){colors[i][0]=255; colors[i][1]=0; colors[i][2]=0;}
     size_t bufferSize = vertexCount * gSphereVertexLayout.mBindings[0].mStride;
     void* bufferData = tf_calloc(1, bufferSize);
     copy_attribute(&gSphereVertexLayout, bufferData, 0, 12, vertexCount, (void*)positions);
     copy_attribute(&gSphereVertexLayout, bufferData, 12, 3, vertexCount, colors);
     copy_attribute(&gSphereVertexLayout, bufferData, 16, 12, vertexCount, normals);
-    gSphereIndexCount = vertexCount;
+    gSphereIndexCount = indexCount;
     BufferLoadDesc sphereVbDesc = {};
     sphereVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
     sphereVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
@@ -239,12 +204,14 @@ static void generate_complex_mesh()
     BufferLoadDesc sphereIbDesc = {};
     sphereIbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
     sphereIbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-    sphereIbDesc.mDesc.mSize = sizeof(indices);
+    sphereIbDesc.mDesc.mSize = indexCount * sizeof(uint16_t);
     sphereIbDesc.pData = (void*)indices;
     sphereIbDesc.ppBuffer = &pSphereIndexBuffer;
     addResource(&sphereIbDesc, nullptr);
     waitForAllResourceLoads();
     tf_free(bufferData);
+    tf_free(normals);
+    tf_free(colors);
 }
 
 class Transformations: public IApp
@@ -296,33 +263,7 @@ public:
         INIT_RS_DESC(rootDesc, "default.rootsig", "compute.rootsig");
         initRootSignature(pRenderer, &rootDesc);
 
-        SamplerDesc samplerDesc = { FILTER_LINEAR,
-                                    FILTER_LINEAR,
-                                    MIPMAP_MODE_LINEAR,
-                                    ADDRESS_MODE_CLAMP_TO_EDGE,
-                                    ADDRESS_MODE_CLAMP_TO_EDGE,
-                                    ADDRESS_MODE_CLAMP_TO_EDGE };
-        addSampler(pRenderer, &samplerDesc, &pSkyBoxSampler);
 
-        // Loads Skybox Textures
-        for (int i = 0; i < 6; ++i)
-        {
-            TextureLoadDesc textureDesc = {};
-            textureDesc.pFileName = pSkyBoxImageFileNames[i];
-            textureDesc.ppTexture = &pSkyBoxTextures[i];
-            // Textures representing color should be stored in SRGB or HDR format
-            textureDesc.mCreationFlag = TEXTURE_CREATION_FLAG_SRGB;
-            addResource(&textureDesc, NULL);
-        }
-
-        uint64_t       skyBoxDataSize = 4 * 6 * 6 * sizeof(float);
-        BufferLoadDesc skyboxVbDesc = {};
-        skyboxVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
-        skyboxVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-        skyboxVbDesc.mDesc.mSize = skyBoxDataSize;
-        skyboxVbDesc.pData = gSkyBoxPoints;
-        skyboxVbDesc.ppBuffer = &pSkyBoxVertexBuffer;
-        addResource(&skyboxVbDesc, NULL);
 
         BufferLoadDesc ubDesc = {};
         ubDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -372,12 +313,7 @@ public:
 
         waitForAllResourceLoads();
 
-        // Setup planets (Rotation speeds are relative to Earth's, some values randomly given)
-        // Sun
-        gPlanetInfoData[0].mRotationSpeed = 1.0f; // rotation speed
-        gPlanetInfoData[0].mTranslationMat = mat4::identity();
-        gPlanetInfoData[0].mScaleMat = mat4::scale(vec3(2.0f));
-        gPlanetInfoData[0].mColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
 
         CameraMotionParameters cmp{ 160.0f, 600.0f, 200.0f };
         vec3                   camPos{ 48.0f, 48.0f, 20.0f };
@@ -413,11 +349,6 @@ public:
             }
         }
 
-        removeResource(pSkyBoxVertexBuffer);
-        removeSampler(pRenderer, pSkyBoxSampler);
-
-        for (uint i = 0; i < 6; ++i)
-            removeResource(pSkyBoxTextures[i]);
 
         exitGpuCmdRing(pRenderer, &gGraphicsCmdRing);
         exitSemaphore(pRenderer, pImageAcquiredSemaphore);
@@ -575,26 +506,10 @@ public:
         gUniformData.mLightPosition = vec4(0, 0, 0, 0);
         gUniformData.mLightColor = vec4(0.9f, 0.9f, 0.7f, 1.0f); // Pale Yellow
 
-        // update pyramid transformation
-        for (unsigned int i = 0; i < gNumPlanets; i++)
-        {
-            mat4 rotSelf = mat4::identity();
-            if (gPlanetInfoData[i].mRotationSpeed > 0.0f)
-                rotSelf = mat4::rotationY(gRotSelfScale * (currentTime + gTimeOffset) / gPlanetInfoData[i].mRotationSpeed);
-
-            mat4 trans = gPlanetInfoData[i].mTranslationMat;
-            mat4 scale = gPlanetInfoData[i].mScaleMat;
-
-            scale[0][0] /= 2;
-            scale[1][1] /= 2;
-            scale[2][2] /= 2;
-
-            gUniformData.mToWorldMat[i] = trans * rotSelf * scale;
-            gUniformData.mColor[i] = gPlanetInfoData[i].mColor;
-        }
-
-        viewMat.setTranslation(vec3(0));
-        gUniformData.mSkyProjectView = projMat * viewMat;
+        static float rotation = 0.0f;
+        rotation += deltaTime * 0.4f;
+        gUniformData.mModelMat = mat4::rotationY(rotation);
+        gUniformData.mColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
     }
 
     void Draw()
@@ -669,9 +584,9 @@ public:
         };
         cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
 
-        cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Skybox/Planets");
+        cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Mesh");
 
-        // simply record the screen cleaning command
+        // clear screen and set render target
         BindRenderTargetsDesc bindRenderTargets = {};
         bindRenderTargets.mRenderTargetCount = 1;
         bindRenderTargets.mRenderTargets[0] = { pRenderTarget, LOAD_ACTION_CLEAR };
@@ -679,27 +594,14 @@ public:
         cmdBindRenderTargets(cmd, &bindRenderTargets);
         cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
         cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
-
-        const uint32_t skyboxVbStride = sizeof(float) * 4;
-        // draw skybox
-        cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Skybox");
-        cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 1.0f, 1.0f);
-        cmdBindPipeline(cmd, pSkyBoxDrawPipeline);
-        cmdBindDescriptorSet(cmd, 0, pDescriptorSetTexture);
-        cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
-        cmdBindVertexBuffer(cmd, 1, &pSkyBoxVertexBuffer, &skyboxVbStride, NULL);
-        cmdDraw(cmd, 36, 0);
-        cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
-        cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
-
-        cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Planets");
+        cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Object");
         cmdBindPipeline(cmd, pSpherePipeline);
         cmdBindVertexBuffer(cmd, 1, &pSphereVertexBuffer, &gSphereVertexLayout.mBindings[0].mStride, nullptr);
         cmdBindIndexBuffer(cmd, pSphereIndexBuffer, INDEX_TYPE_UINT16, 0);
-        cmdDrawIndexedInstanced(cmd, gSphereIndexCount, 0, gNumPlanets, 0, 0);
+        cmdDrawIndexedInstanced(cmd, gSphereIndexCount, 0, 1, 0, 0);
         cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
-        cmdEndGpuTimestampQuery(cmd, gGpuProfileToken); // Draw Skybox/Planets
+        cmdEndGpuTimestampQuery(cmd, gGpuProfileToken); // Draw Mesh
         cmdBindRenderTargets(cmd, NULL);
 
         if (pRenderer->pGpu->mPipelineStatsQueries)
@@ -818,8 +720,6 @@ public:
 
     void addDescriptorSets()
     {
-        DescriptorSetDesc descPersisent = SRT_SET_DESC(SrtData, Persistent, 1, 0);
-        addDescriptorSet(pRenderer, &descPersisent, &pDescriptorSetTexture);
         DescriptorSetDesc descUniforms = SRT_SET_DESC(SrtData, PerFrame, gDataBufferCount, 0);
         addDescriptorSet(pRenderer, &descUniforms, &pDescriptorSetUniforms);
     }
@@ -827,34 +727,24 @@ public:
     void removeDescriptorSets()
     {
         removeDescriptorSet(pRenderer, pDescriptorSetUniforms);
-        removeDescriptorSet(pRenderer, pDescriptorSetTexture);
     }
 
     void addShaders()
     {
-        ShaderLoadDesc skyShader = {};
-        skyShader.mVert.pFileName = "skybox.vert";
-        skyShader.mFrag.pFileName = "skybox.frag";
-
         ShaderLoadDesc basicShader = {};
         basicShader.mVert.pFileName = "basic.vert";
         basicShader.mFrag.pFileName = "basic.frag";
 
-        addShader(pRenderer, &skyShader, &pSkyBoxDrawShader);
         addShader(pRenderer, &basicShader, &pSphereShader);
     }
 
     void removeShaders()
     {
         removeShader(pRenderer, pSphereShader);
-        removeShader(pRenderer, pSkyBoxDrawShader);
     }
 
     void addPipelines()
     {
-        RasterizerStateDesc rasterizerStateDesc = {};
-        rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-
         RasterizerStateDesc sphereRasterizerStateDesc = {};
         sphereRasterizerStateDesc.mCullMode = CULL_MODE_FRONT;
 
@@ -865,7 +755,7 @@ public:
 
         PipelineDesc desc = {};
         desc.mType = PIPELINE_TYPE_GRAPHICS;
-        PIPELINE_LAYOUT_DESC(desc, SRT_LAYOUT_DESC(SrtData, Persistent), SRT_LAYOUT_DESC(SrtData, PerFrame), NULL, NULL);
+        PIPELINE_LAYOUT_DESC(desc, NULL, SRT_LAYOUT_DESC(SrtData, PerFrame), NULL, NULL);
         GraphicsPipelineDesc& pipelineSettings = desc.mGraphicsDesc;
         pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
         pipelineSettings.mRenderTargetCount = 1;
@@ -879,51 +769,15 @@ public:
         pipelineSettings.pRasterizerState = &sphereRasterizerStateDesc;
         pipelineSettings.mVRFoveatedRendering = true;
         addPipeline(pRenderer, &desc, &pSpherePipeline);
-
-        // layout and pipeline for skybox draw
-        VertexLayout vertexLayout = {};
-        vertexLayout.mBindingCount = 1;
-        vertexLayout.mBindings[0].mStride = sizeof(float4);
-        vertexLayout.mAttribCount = 1;
-        vertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-        vertexLayout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
-        vertexLayout.mAttribs[0].mBinding = 0;
-        vertexLayout.mAttribs[0].mLocation = 0;
-        vertexLayout.mAttribs[0].mOffset = 0;
-        pipelineSettings.pVertexLayout = &vertexLayout;
-
-        pipelineSettings.pDepthState = NULL;
-        pipelineSettings.pRasterizerState = &rasterizerStateDesc;
-        pipelineSettings.pShaderProgram = pSkyBoxDrawShader; //-V519
-        addPipeline(pRenderer, &desc, &pSkyBoxDrawPipeline);
     }
 
     void removePipelines()
     {
-        removePipeline(pRenderer, pSkyBoxDrawPipeline);
         removePipeline(pRenderer, pSpherePipeline);
     }
 
     void prepareDescriptorSets()
     {
-        // Prepare descriptor sets
-        DescriptorData params[7] = {};
-        params[0].mIndex = SRT_RES_IDX(SrtData, Persistent, gRightTexture);
-        params[0].ppTextures = &pSkyBoxTextures[0];
-        params[1].mIndex = SRT_RES_IDX(SrtData, Persistent, gLeftTexture);
-        params[1].ppTextures = &pSkyBoxTextures[1];
-        params[2].mIndex = SRT_RES_IDX(SrtData, Persistent, gTopTexture);
-        params[2].ppTextures = &pSkyBoxTextures[2];
-        params[3].mIndex = SRT_RES_IDX(SrtData, Persistent, gBotTexture);
-        params[3].ppTextures = &pSkyBoxTextures[3];
-        params[4].mIndex = SRT_RES_IDX(SrtData, Persistent, gFrontTexture);
-        params[4].ppTextures = &pSkyBoxTextures[4];
-        params[5].mIndex = SRT_RES_IDX(SrtData, Persistent, gBackTexture);
-        params[5].ppTextures = &pSkyBoxTextures[5];
-        params[6].mIndex = SRT_RES_IDX(SrtData, Persistent, gSampler);
-        params[6].ppSamplers = &pSkyBoxSampler;
-        updateDescriptorSet(pRenderer, 0, pDescriptorSetTexture, TF_ARRAY_COUNT(params), params);
-
         for (uint32_t i = 0; i < gDataBufferCount; ++i)
         {
             DescriptorData uParams[1] = {};
