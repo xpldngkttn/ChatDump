@@ -1,0 +1,26 @@
+STRUCT(UniformData)
+{
+    DATA(float4x4, mvp, None);
+    DATA(float4, color, None);
+};
+
+STRUCT(VSInput)
+{
+    DATA(float3, position, POSITION);
+};
+
+STRUCT(VSOutput)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float4, Color, COLOR0);
+};
+
+ROOT_SIGNATURE(DefaultRootSignature)
+VSOutput VS_MAIN(VSInput In)
+{
+    INIT_MAIN;
+    VSOutput Out;
+    Out.Position = mul(gUniformData.mvp, float4(In.position, 1.0f));
+    Out.Color = gUniformData.color;
+    RETURN(Out);
+}
