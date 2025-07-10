@@ -1,0 +1,6 @@
+STRUCT(UniformData)
+{
+    DATA(float4x4, mvp, None);
+};
+
+#include "Global.srt.h"
