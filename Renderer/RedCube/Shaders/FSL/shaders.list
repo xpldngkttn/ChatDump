@@ -1,0 +1,12 @@
+#include "../../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#frag cube.frag
+#include "cube.frag.fsl"
+#end
+
+#vert cube.vert
+#include "cube.vert.fsl"
+#end
